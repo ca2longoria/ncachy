@@ -29,3 +29,24 @@ EOF
 Run `make` for standard compilation of **ccachy**.
 `make debug` will compile a version with colored debug output.
 
+## Examples
+
+```
+#!/bin/bash
+
+# '-k' defaults to parent pid, so ncachy's socket file will  will be cleaned
+# up when the script finishes.
+SOK=`ncachy -d -k`
+
+echo socket in use: $SOK
+
+A=1
+ccachy a=1
+for i in {1..5} | while read line; do
+  echo $A
+  let A=$A+1
+  ccachy a=$(expr $(ccachy a) + 1)
+done
+echo A vs a: $A, `ccachy a`
+
+```
