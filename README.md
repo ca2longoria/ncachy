@@ -9,7 +9,7 @@ Why does it exist?  Because it can be between 10-15 times faster than ncachy use
 
 Its usage doesn't match **ncachy's** exactly, but it's close enough.
 
-```
+```bash
 # Set, via argument
 ccachy [@name] [key1=val1 [key2=val2 [key3=val3 ...]]]
 # Get, via argument
