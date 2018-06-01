@@ -47,7 +47,7 @@ ccachy a=1
 for i in {1..5} | while read line; do
   echo $A
   let A=$A+1
-  ccachy a=$(expr $(ccachy a) + 1)
+  ccachy a+=1
 done
 echo
 echo A vs a: $A, `ccachy a`
