@@ -41,6 +41,7 @@ For usage, run `ncachy --help`.  I haven't added usage output to **ccachy**, yet
 SOK=`ncachy -d -k`
 
 echo socket in use: $SOK
+echo
 
 A=1
 ccachy a=1
@@ -56,6 +57,8 @@ echo A vs a: $A, `ccachy a`
 
 When running the above, the output looks like...
 ```
+socket in use: /tmp/jeeze.sock
+
 1
 2
 3
