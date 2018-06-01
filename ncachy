@@ -324,7 +324,7 @@ else if (config.mode == 'server' && config.daemon) {
 			data.split('\n').map((line) => {
 				if (verbose)
 					log.out(color('serv.on(line)',92),line);
-				var xSet = /^([^= \t]+)=(.*)$/;
+				var xSet = /^([^= \t]*[^= \t+-])([+-]?=)(.*)$/;
 				var xGet = /^([^= \t]+)[ \t]*$/;
 				if (xGet.test(line)) {
 					// Get the value with key.
@@ -346,10 +346,18 @@ else if (config.mode == 'server' && config.daemon) {
 					// Set the value.
 					var m = xSet.exec(line);
 					var key = m[1];
-					var val = m[2];
+					var op  = m[2];
+					var val = m[3];
 					if (verbose)
-						log.out(color('setting',93),key,val)
-					table[key] = val;
+						log.out(color('setting',93),key,op,val)
+					switch(op) {
+						case '=':
+							table[key] = val; break;
+						case '+=':
+							table[key] = ''+(parseInt(table[key]) + parseInt(val)); break;
+						case '-=':
+							table[key] = ''+(parseInt(table[key]) - parseInt(val)); break;
+					}
 					// NOTE: Let's not output the value on setting.  It'd be a pain
 					//   handling that in-script.
 					//sok.write(val+'\n');
