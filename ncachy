@@ -1,0 +1,489 @@
+#!/usr/bin/env node
+
+net = require('net');
+
+
+// { Function declarations.
+
+function usage() {
+	var name = process.argv[1].replace(/.*\//,'')
+	console.log(`
+usage:
+
+  `+name+` [@<sockname>] (-d|-u) [-k [<pid>]] [-v]
+    |__ start server daemon
+    |__ -d starts with a global socket file
+    |    . or as named by <sockname>
+    |__ -u starts with a socket file unique to the daemon
+    |    . applies unique id to either default name or <socketname>
+    |__ -k kills the daemon on the death of the target pid
+    |    . <pid> defaults to parent pid
+    |    . runs in a check loop, not a callback
+    \\__ -v verbose
+
+  `+name+` [@<sockname>] key=value [key=value [key=value ...]]
+    \\__ set values
+
+  `+name+` [@<sockname>] key [key [key ...]]
+    \\__ get values (output by line)
+
+more args:
+
+  --socket    force socket to specific filepath
+  --json      print out entire table contents in JSON format
+  --list     print table key/val list with '='s
+  --help/-h   display this message
+
+stdin:
+
+  Priortizes args, ignoring stdin if args beyond <tablename> are present.
+
+commands:
+  
+  ncachy ... =<command>
+    \\__ note the '=' preceeding the command
+  
+  =json       called when passing '--json' option
+  =list      called when passing '--list' option
+  =config     outputs config object in json format
+  =kill       kills daemon relevant to target socket
+`);
+}
+
+function Logger(path,flags) {
+	var fs = fs || require('fs');
+	var outpath = path + '.out';
+	var errpath = path + '.err';
+	var out = fs.createWriteStream(outpath,{flags:flags});
+	var err = fs.createWriteStream(errpath,{flags:flags});
+	this.out = function() {
+		out.write([].slice.call(arguments,0).join(' ')+'\n');
+	}
+	this.err = function() {
+		err.write([].slice.call(arguments,0).join(' ')+'\n');
+	}
+	this.end = function() {
+		out.end();
+		err.end();
+	}
+}
+
+function TimeLogger(path,flags) {
+	var log = new Logger(path,flags);
+	function affect(r) {
+		r[0] = new Date()+'|'+r[0];
+	}
+	this.out = () => {
+		affect(arguments);
+		log.out.apply(log,arguments);
+	}
+	this.err = () => {
+		affect(arguments);
+		log.err.apply(log,arguments);
+	}
+}
+
+function processExists(pid) {
+	try {
+		// NOTE: This should throw an error if the process doesn't exist, or do
+		//   nothing at all if it does exist (thanks to that zero).
+		process.kill(pid,0);
+	}
+	catch (e) {
+		//console.log('ERROI:',JSON.stringify(e,null,'  '))
+		//if (e.code !== 'EPERM')
+		return false;
+	}
+	return true;
+}
+
+function uniqueId() {
+	var max = (1<<30);
+	return new Date().getTime() + '.' + Math.floor(Math.random()*max);
+}
+
+function color(s,c) {
+	return '\033['+c+'m'+s+'\033[0m';
+}
+
+function configSetup(config,argv) {
+	
+	//if (argv.length == 0) {
+	//	config.mode = 'usage';
+	//	return config;
+	//}
+	if (argv.indexOf('-h') >= 0 || argv.indexOf('--help') >= 0) {
+		config.mode = 'usage';
+		return config;
+	}
+	
+	// Socket file as first arg, as opposed to a '-s' flag or something sensibble.
+	if (/^@/.test(argv[0])) {
+		config.sockName = argv[0].replace(/^@/,'');
+		argv = argv.slice(1);
+	}
+	else
+		config.sockName = 'jeeze';
+	
+	// Config properties.
+	if (argv.indexOf('-v') >= 0)
+		verbose = true;
+	
+	if (argv.indexOf('-d') >= 0)
+		config.mode = 'server';
+	
+	if (argv.indexOf('-u') >= 0) {
+		config.mode = 'server';
+		config.sockName = config.sockName + '.' + uniqueId();
+	}
+	
+	if (argv.indexOf('--daemon') >= 0) {
+		config.daemon = true;
+	}
+	
+	if (argv.indexOf('--socket') >= 0) {
+		config.sockDir = null;
+		config.sockName = null;
+		config.socket = argv[argv.indexOf('--socket')+1];
+	}
+	else
+		config.socket = config.sockDir + '/' + config.sockName + '.sock';
+	
+	if (argv.indexOf('-k') >= 0) {
+		var p = parseInt(argv[argv.indexOf('-k')+1]);
+		p = (isNaN(p) ? process.ppid : p)
+		p = (processExists(p) ? p : 'PERISH');
+		config.kill = p;
+	}
+	
+	if (argv.indexOf('--json') >= 0) {
+		config.mode = 'json';
+	}
+	else if (argv.indexOf('--list') >= 0) {
+		config.mode = 'list';
+	}
+	
+	// Command args.
+	tokens = argv.filter((a)=>!/^-/.test(a))
+	if (config.mode !== 'server' && tokens.length > 0) {
+		config.mode = 'client';
+		config.args = true;
+	}
+	
+	if (verbose)
+		console.log(JSON.stringify(config));
+	
+	return config;
+}
+
+// }
+
+
+// { Config setup; may use for things for reasons.
+var verbose = false;
+var config = configSetup({
+	socket:'/tmp/jeeze.sock',
+	sockDir:'/tmp',
+	sockName:'jeeze',
+	mode:'client',
+	args:false,
+	kill:null,
+	daemon:false,
+	pid:process.pid
+}, process.argv.slice(2));
+
+var glog;
+if (verbose) {
+	glog = new Logger('/tmp/log.ncachy');
+}
+// }
+
+
+if (config.mode == 'usage') {
+	// Output usage.
+	
+	usage();
+	
+	process.exit(0);
+}
+
+else if (config.mode == 'server' && !config.daemon) {
+	
+	fs = require('fs');
+	cp = require('child_process');
+	
+	// Include the --daemon flag to kick off the actual server.
+	var args = process.argv.slice(2);
+	args.push('--daemon');
+	
+	// Insert kill pid argument, if it's missing from argv.
+	if (config.kill) {
+		var i = args.indexOf('-k');
+		if (args.length == i+1 || isNaN(parseInt(args[i])))
+			args.splice(i+1,0,config.kill);
+	}
+	
+	// Detached, so doesn't pick up kill signals passed by the parent and whatnot.
+	
+	// NOTE: Fascinating!  fork() hangs on command substitution (backticks or
+	//   $(...)).  But spawn() does not.  Must have something to do with the
+	//   special node inter-process behavior.
+	//cp.fork(__filename,args,{
+	
+	if (verbose)
+		console.log(__filename,args);
+	
+	var p = cp.spawn(__filename,args,{
+		detached:true
+	});
+	
+	p.on('error',(e) => {
+		console.error('ERROR: spawn error:',e);
+	});
+	
+	var timeout = 500;
+	var time = new Date().getTime();
+	setInterval(() => {
+		if (new Date().getTime() - time >= timeout) {
+			// Timed out so weep, weep collapsed upon the ground.
+			if (verbose)
+				console.log('ERROR: failed to create socket');
+			process.exit(1);
+		}
+		if (fs.existsSync(config.socket)) {
+			// Socket is ready, so exit.
+			console.log(config.socket)
+			process.exit(0);
+		}
+	}, 10);
+}
+
+else if (config.mode == 'server' && config.daemon) {
+	// Run as server daemon.
+	
+	fs = require('fs');
+	readline = require('readline');
+	
+	var table = {};
+	
+	var log;
+	if (verbose)
+		//log = new TimeLogger(config.socket);
+		log = new Logger(config.socket);
+	
+	var f;
+	process.on('exit',f=() => {
+		if (verbose)
+			log.out(color('daemon exiting',91));
+		if (fs.existsSync(config.socket))
+			fs.unlinkSync(config.socket);
+		process.exit(0);
+	});
+	process.on('SIGINT',()=>{ phantom.exit() });
+	process.on('SIGTERM',()=>{ phantom.exit() });
+	
+	var serv = net.createServer((sok) => {
+		// Here's where the response to client commands is handled.
+		
+		var these = [];
+		sok.setEncoding('utf-8');
+		
+		//sok.on('data',(data) => {
+		var sf;
+		rl = readline.createInterface({ input:sok });
+		rl.on('line',sf=(data) => {
+			// And HERE'S where it all goes down!
+			
+			// UNCERTAIN: Is data ever split *before* an '\n' is encountered?
+			//   Yes, it can be, if it's a custom client.  But it's handled here
+			//   under the assumption that the client knows what it's doing.
+			
+			if (verbose)
+				log.out('data:',data);
+			
+			if (/^=/.test(data)) {
+				var command = data.split('\n')[0].slice(1);
+				switch(command) {
+					case 'json':
+						sok.write(JSON.stringify(table,null,'  ')); break;
+					case 'list':
+						for (var k in table)
+							sok.write(k+'='+table[k]+'\n');
+						break;
+					case 'config':
+						sok.write(JSON.stringify(config,null,'  ')); break;
+					case 'kill':
+						process.exit();
+					default:
+						if (verbose)
+							log.err('Not a command: '+command);
+				}
+				return;
+			}
+			
+			data.split('\n').map((line) => {
+				if (verbose)
+					log.out(color('serv.on(line)',92),line);
+				var xSet = /^([^= \t]+)=(.*)$/;
+				var xGet = /^([^= \t]+)[ \t]*$/;
+				if (xGet.test(line)) {
+					// Get the value with key.
+					var key = xGet.exec(line)[1];
+					if (verbose)
+						log.out(color('getting',93),key);
+					if (key in table) {
+						var val = table[key];
+						switch(typeof val) {
+							case 'string':
+								sok.write(val+'\n'); break;
+							case 'object':
+								// NOTE: Wait... when will this ever happen?
+								sok.write(JSON.stringify(val)+'\n'); break;
+						}
+					}
+				}
+				else if (xSet.test(line)) {
+					// Set the value.
+					var m = xSet.exec(line);
+					var key = m[1];
+					var val = m[2];
+					if (verbose)
+						log.out(color('setting',93),key,val)
+					table[key] = val;
+					// NOTE: Let's not output the value on setting.  It'd be a pain
+					//   handling that in-script.
+					//sok.write(val+'\n');
+					sok.write('\0');
+				}
+				else {
+					if (verbose)
+						log.out('Neither!?');
+				}
+			});
+			//sok.write('nyih: '+data+'\n');
+		});
+		
+		rl.on('end',sf)
+		
+		sok.on('end',(eyy)=>{
+			if (verbose)
+				log.out('server sok ended')
+		});
+		
+		sok.on('error',(e) => {
+			if (verbose) {
+				log.err(color('sock err:',93),color(e,91));
+				log.err(e.stack);
+			}
+		});
+		
+	});
+	
+	serv.listen(config.socket,-1,() => {
+		if (verbose) {
+			console.log('ncachy server active: ',serv.address());
+		}
+		
+		// Kill server if socket file disappears.
+		setInterval(() => {
+			if (!fs.existsSync(config.socket)) {
+				console.error('ERROR: socket ('+config.socket+') has vanished');
+				process.exit(1);
+			}
+		},1000);
+	});
+	
+	serv.on('error',(e) => {
+		if (verbose) {
+			log.err('serv err:',color(e,91));
+			log.err(e.stack);
+		}
+	});
+	
+	// NOTE: Does this not mandate unique sockets per server daemon?
+	if (config.kill) {
+		setInterval(() => {
+			if (!processExists(config.kill)) {
+				//console.error('do not die my freeend.');
+				process.exit();
+			}
+		},250);
+	}
+}
+
+else if (config.mode == 'client') {
+	// Run as client against server daemon.
+	
+	stream = require('stream');
+	readline = require('readline');
+	
+	// Read in either from args or from stdin.
+	
+	function evaluate(line) {
+		
+	}
+	function getArgs() {
+		var r = process.argv.slice(2);
+		if (/^@/.test(r[0]))
+			r = r.slice(1);
+		return r.filter((a)=>!/^-/.test(a));
+	}
+	
+	var client = net.Socket()
+	var argv = getArgs();
+	
+	var rs;
+	if (argv.length > 0) {
+		rs = new stream.Readable();
+		argv.map((a)=>{ rs.push(a+'\n') });
+		rs.push(null);
+	}
+	else
+		rs = process.stdin; //readline.createInterface({input:process.stdin});
+	
+	var rl = readline.createInterface({
+		input:client
+	});
+	rl.on('line',(s) => {
+		if (s.length > 0 && s[0] == '\0')
+		{
+			// HACK: Had to output *something* for ccachy's gets to work, since it
+			//   expects a read no matter what.  So \0 it is.
+		}
+		else
+			console.log(s);
+	});
+	
+	client.on('connect',() => {
+		if (verbose)
+			console.log('client connected?');
+	});
+	
+	client.connect(config.socket,() => {
+		var rl = readline.createInterface({input:rs});
+		rl.on('line',(s) => { client.write(s+'\n') });
+		rl.on('close',() => { client.end() });
+	});
+	
+}
+
+else if (config.mode == 'json') {
+	var client = net.Socket();
+	var sbuf = [];
+	client.on('data',(data) => { sbuf.push(data) });
+	client.on('close',() => { console.log(sbuf.join('')) });
+	client.connect(config.socket,() => {
+		client.end('=json');
+	});
+}
+
+else if (config.mode == 'list') {
+	var client = net.Socket();
+	var sbuf = [];
+	client.on('data',(data) => { sbuf.push(data) });
+	client.on('close',() => { console.log(sbuf.join('').replace(/\n$/,'')) });
+	client.connect(config.socket,() => {
+		client.end('=list');
+	});
+}
+
