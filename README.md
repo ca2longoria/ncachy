@@ -47,6 +47,18 @@ for i in {1..5} | while read line; do
   let A=$A+1
   ccachy a=$(expr $(ccachy a) + 1)
 done
+echo
 echo A vs a: $A, `ccachy a`
 
+```
+
+When running the above, the output looks like...
+```
+1
+2
+3
+4
+5
+
+A vs a: 1, 6
 ```
