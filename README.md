@@ -31,7 +31,7 @@ Run `make` for standard compilation of **ccachy**.
 
 ## Examples
 
-```
+```bash
 #!/bin/bash
 
 # '-k' defaults to parent pid, so ncachy's socket file will  will be cleaned
