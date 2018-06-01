@@ -31,6 +31,8 @@ Run `make` for standard compilation of **ccachy**.
 
 ## Examples
 
+For usage, run `ncachy --help`.  I haven't added usage output to **ccachy**, yet.
+
 ```bash
 #!/bin/bash
 
