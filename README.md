@@ -10,9 +10,17 @@ Why does it exist?  Because it can be between 10-15 times faster than ncachy use
 Its usage doesn't match **ncachy's** exactly, but it's close enough.
 
 ```
+# Set, via argument
 ccachy [@name] [key1=val1 [key2=val2 [key3=val3 ...]]]
+# Get, via argument
 ccachy [@name] [arg1 [arg2 [arg3 ...]]]
-<stdin> | cachy [@name]
+
+# stdin as an alternative to arguments
+cachy [@name] <<EOF
+key1=val1
+key2=val2
+key3=val3
+EOF
 ```
 ^ Pretty much like that.
 
