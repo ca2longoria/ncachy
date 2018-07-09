@@ -5,7 +5,7 @@ Single-file unix-socket-file server/client key/val store script.  Paired with cc
 
 **ccachy** mimics only the client-side behavior of **ncachy**.
 
-Why does it exist?  Because it can be between 10-15 times faster than ncachy used in its client context on a single-core machine, and if it is to be used in long loops, it's needs to be at least that fast.
+Why does it exist?  Because it can be between 10-15 times faster than ncachy used in its client context on a single-core machine, and if it is to be used in long loops, it needs to be at least that fast.
 
 Its usage doesn't match **ncachy's** exactly, but it's close enough.
 
@@ -16,7 +16,7 @@ ccachy [@name] [key1=val1 [key2=val2 [key3=val3 ...]]]
 ccachy [@name] [arg1 [arg2 [arg3 ...]]]
 
 # stdin as an alternative to arguments
-cachy [@name] <<EOF
+ccachy [@name] <<EOF
 key1=val1
 key2=val2
 key3=val3
